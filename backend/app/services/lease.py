@@ -4,22 +4,11 @@ import sqlite3
 from datetime import datetime, timezone
 
 from app.services.ready import readiness, resource_busy
+from app.services.stats import water_level
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _bump(conn: sqlite3.Connection, key: str, delta: int) -> int:
-    row = conn.execute("SELECT value FROM watermarks WHERE key=?", (key,)).fetchone()
-    cur = int(row["value"]) if row else 0
-    nxt = cur + delta
-    conn.execute(
-        "INSERT INTO watermarks(key, value, updated_at) VALUES(?,?,?) "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-        (key, nxt, _now()),
-    )
-    return nxt
 
 
 def _conflict_mode(conn: sqlite3.Connection) -> str:
@@ -30,6 +19,11 @@ def _conflict_mode(conn: sqlite3.Connection) -> str:
 
 
 def open_lease(conn: sqlite3.Connection, session_code: str) -> dict:
+    """开窗。冲突臂只写 conflicts 行；成功臂只写 leases 行 + 会话状态。
+
+    两条臂都不碰任何计数表——水位由同事务写入的事实行聚合得出，
+    因此开窗 +1 / 冲突加计天然与写路径同源，不存在「改水位冒充成功」。
+    """
     session = conn.execute(
         "SELECT * FROM sessions WHERE code=?", (session_code,)
     ).fetchone()
@@ -50,6 +44,7 @@ def open_lease(conn: sqlite3.Connection, session_code: str) -> dict:
                 if kind == "room"
                 else (session["teacher_code"] if kind == "teacher" else session_code)
             )
+            # 一次冲突事件 = conflicts 一行；冲突计数由该行聚合，无需再加计。
             conn.execute(
                 "INSERT INTO conflicts(kind, session_code, resource_code, day, start_min, end_min, reason, created_at) "
                 "VALUES(?,?,?,?,?,?,?,?)",
@@ -64,12 +59,12 @@ def open_lease(conn: sqlite3.Connection, session_code: str) -> dict:
                     _now(),
                 ),
             )
-            _bump(conn, "conflict_count", 1)
         # 底座贯彻 reject（冲突落库后由调用方提交）；候补算力槽留给后续题
         return {
             "ok": False,
             "error": "；".join(ready["reasons"]),
             "conflict_mode": mode,
+            **water_level(conn),
         }
 
     if resource_busy(
@@ -109,13 +104,12 @@ def open_lease(conn: sqlite3.Connection, session_code: str) -> dict:
     conn.execute(
         "UPDATE sessions SET status='live' WHERE code=?", (session_code,)
     )
-    open_n = _bump(conn, "open_leases", 1)
     return {
         "ok": True,
         "lease_no": lease_no,
         "session_code": session_code,
         "status": "open",
-        "open_leases": open_n,
+        **water_level(conn),
     }
 
 
@@ -135,9 +129,8 @@ def close_lease(conn: sqlite3.Connection, lease_no: str) -> dict:
         "UPDATE sessions SET status='done' WHERE code=?",
         (lease["session_code"],),
     )
-    open_n = _bump(conn, "open_leases", -1)
     return {
         "lease_no": lease_no,
         "status": "closed",
-        "open_leases": open_n,
+        **water_level(conn),
     }

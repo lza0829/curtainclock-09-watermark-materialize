@@ -120,6 +120,12 @@ a {
   font-size: 1.1rem;
 }
 
+.panel .sub {
+  margin: -6px 0 12px;
+  color: #4b584f;
+  font-size: 0.85rem;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

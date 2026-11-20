@@ -9,11 +9,15 @@ function fmtMin(m) {
 
 export default function Leases() {
   const [rows, setRows] = useState([]);
+  const [level, setLevel] = useState(null);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
   async function load() {
-    setRows(await api.leases());
+    // items 与水位来自后端同一快照，页面不再自己数行。
+    const d = await api.leases();
+    setRows(d.items);
+    setLevel(d);
   }
 
   useEffect(() => {
@@ -29,12 +33,19 @@ export default function Leases() {
       await load();
     } catch (e) {
       setErr(e.message);
+      await load().catch(() => {});
     }
   }
 
   return (
     <section className="panel">
       <h2>租约</h2>
+      {level && (
+        <p className="sub">
+          在途租约 {level.open_leases} · 冲突 {level.conflict_count}
+          （与总览同一聚合口径）
+        </p>
+      )}
       {msg && <div className="msg">{msg}</div>}
       {err && <div className="msg err">{err}</div>}
       <table>

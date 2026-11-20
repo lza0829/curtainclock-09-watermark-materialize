@@ -3,8 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.db import connect, transaction
+from app.db import read_snapshot, transaction
 from app.services import lease as lease_svc
+from app.services.stats import water_level
 
 router = APIRouter(tags=["leases"])
 
@@ -19,26 +20,22 @@ class CloseBody(BaseModel):
 
 @router.get("/leases")
 def list_leases():
-    conn = connect()
-    try:
+    # 列表与水位在同一快照内读出：不会出现「列表 3 行在途、水位写 2」的半截。
+    with read_snapshot() as conn:
         rows = conn.execute(
             "SELECT * FROM leases ORDER BY id DESC"
         ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
+        return {"items": [dict(r) for r in rows], **water_level(conn)}
 
 
 @router.get("/conflicts")
 def list_conflicts():
-    conn = connect()
-    try:
+    with read_snapshot() as conn:
         rows = conn.execute(
             "SELECT * FROM conflicts ORDER BY id DESC LIMIT 100"
         ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
+        # conflict_count 是总数（不受 LIMIT 影响），与总览同一聚合口径。
+        return {"items": [dict(r) for r in rows], **water_level(conn)}
 
 
 @router.post("/leases/open")

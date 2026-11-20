@@ -3,12 +3,16 @@ import { api } from "../api";
 
 export default function Conflicts() {
   const [rows, setRows] = useState([]);
+  const [level, setLevel] = useState(null);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     api
       .conflicts()
-      .then(setRows)
+      .then((d) => {
+        setRows(d.items);
+        setLevel(d);
+      })
       .catch((e) => setErr(e.message));
   }, []);
 
@@ -17,6 +21,12 @@ export default function Conflicts() {
   return (
     <section className="panel">
       <h2>冲突桶</h2>
+      {level && (
+        <p className="sub">
+          冲突计数 {level.conflict_count} · 在途租约 {level.open_leases}
+          （与总览同一聚合口径，列表最多展示最近 100 条）
+        </p>
+      )}
       <table>
         <thead>
           <tr>
